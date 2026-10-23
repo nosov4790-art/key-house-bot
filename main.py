@@ -1,11 +1,9 @@
 
 import os
 import logging
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-)
+import threading
+from flask import Flask
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -16,15 +14,23 @@ from telegram.ext import (
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("BOT_TOKEN")
-
 ADMINS = [8468706982, 8893604839]
+
+web = Flask(__name__)
+
+@web.get("/")
+def home():
+    return "KEY HOUSE bot is running!", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web.run(host="0.0.0.0", port=port)
 
 MENU = [
     ["🏠 Купить", "🔑 Снять"],
     ["💰 Продать", "📢 Сдать"],
     ["📩 Отправить предложение риэлтору"],
 ]
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = ReplyKeyboardMarkup(MENU, resize_keyboard=True)
@@ -35,7 +41,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
     )
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
@@ -44,21 +49,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["request_type"] = text
         await update.message.reply_text(
             f"Вы выбрали: {text}\n\n"
-            "Опишите, пожалуйста, вашу заявку: район, бюджет или цену, "
-            "количество комнат и другие пожелания."
+            "Опишите вашу заявку: район, бюджет, количество комнат "
+            "или другие пожелания."
         )
         return
 
     if text == "📩 Отправить предложение риэлтору":
         context.user_data["request_type"] = "Предложение риэлтору"
         await update.message.reply_text(
-            "Напишите ваше предложение или оставьте описание недвижимости."
+            "Напишите ваше предложение или описание недвижимости."
         )
         return
 
     request_type = context.user_data.get("request_type")
     if not request_type:
-        await update.message.reply_text("Нажмите /start и выберите нужный раздел.")
+        await update.message.reply_text("Нажмите /start и выберите раздел.")
         return
 
     username = f"@{user.username}" if user.username else "нет username"
@@ -71,35 +76,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Заявка:\n{text}"
     )
 
-    sent = 0
+    delivered = 0
     for admin_id in ADMINS:
         try:
             await context.bot.send_message(chat_id=admin_id, text=message)
-            sent += 1
+            delivered += 1
         except Exception:
             logging.exception("Не удалось отправить заявку администратору %s", admin_id)
 
-    if sent:
+    if delivered:
         await update.message.reply_text(
-            "✅ Спасибо! Ваша заявка отправлена риэлтору KEY HOUSE. "
-            "Мы свяжемся с вами."
+            "✅ Спасибо! Ваша заявка отправлена риэлтору KEY HOUSE."
         )
         context.user_data.pop("request_type", None)
     else:
         await update.message.reply_text(
-            "Не удалось доставить заявку. Попробуйте позже или свяжитесь с риэлтором."
+            "Не удалось доставить заявку. Попробуйте позже."
         )
-
 
 def main():
     if not TOKEN:
-        raise RuntimeError("Не задана переменная окружения BOT_TOKEN в Render")
+        raise RuntimeError("Не задан BOT_TOKEN в Render")
+
+    threading.Thread(target=run_web, daemon=True).start()
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
+
